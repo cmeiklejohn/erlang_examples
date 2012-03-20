@@ -1,52 +1,155 @@
 -module(message_store).
 
--compile(export_all).
+-behaviour(gen_server).
 
 -include_lib("stdlib/include/qlc.hrl").
 
--define(SERVER, message_store).
+%% API
+-export([start_link/0, save_message/2, find_messages/1, shutdown/0]).
 
--record(chat_message,
-        {addressee, 
-         body, 
-         created_on}).
+%% gen_server callbacks
+-export([init/1,
+         handle_call/3,
+         handle_cast/2,
+         handle_info/2,
+         terminate/2,
+         code_change/3]).
+
+-define(SERVER, ?MODULE).
+
+-record(state, {}).
+
+-record(chat_message, {addressee, body, created_on}). 
+
+%%%===================================================================
+%%% API
+%%%===================================================================
 
 save_message(Addressee, Body) -> 
-    global:send(?SERVER, {save_message, Addressee, Body}).
+    gen_server:call(?SERVER, {save_message, Addressee, Body}).
 
 find_messages(Addressee) ->
-    global:send(?SERVER, {find_messages, Addressee, self()}),
-    receive
+    case gen_server:call(?SERVER, {find_messages, Addressee}) of
         {ok, Messages} -> 
             Messages
     end.
 
-start() -> 
-    server_util:start(?SERVER, {message_store, run, [true]}).
+shutdown() -> 
+    gen_server:call(?SERVER, stop).
 
-stop() -> 
-    server_util:stop(?SERVER).
+%%--------------------------------------------------------------------
+%% @doc
+%% Starts the server
+%%
+%% @spec start_link() -> {ok, Pid} | ignore | {error, Error}
+%% @end
+%%--------------------------------------------------------------------
+start_link() ->
+    gen_server:start_link({local, ?SERVER}, ?MODULE, [], []).
 
-run(FirstTime) -> 
-    if 
-        FirstTime == true -> 
-            init_store(), 
-            run(false);
-        true -> 
-            receive
-                {save_message, Addressee, Body} -> 
-                    store_message:w
-                    (Addressee, Body),
-                    run(FirstTime);
-                {find_messages, Addressee, Pid} -> 
-                    Messages = get_messages(Addressee),
-                    Pid ! {ok, Messages},
-                    run(FirstTime);
-                shutdown -> 
-                    mnesia:stop(),
-                    io:format("Shutting down...~n")
-            end
-    end.
+%%%===================================================================
+%%% gen_server callbacks
+%%%===================================================================
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Initializes the server
+%%
+%% @spec init(Args) -> {ok, State} |
+%%                     {ok, State, Timeout} |
+%%                     ignore |
+%%                     {stop, Reason}
+%% @end
+%%--------------------------------------------------------------------
+init([]) ->
+    init_store(),
+    {ok, #state{}}.
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Handling call messages
+%%
+%% @spec handle_call(Request, From, State) ->
+%%                                   {reply, Reply, State} |
+%%                                   {reply, Reply, State, Timeout} |
+%%                                   {noreply, State} |
+%%                                   {noreply, State, Timeout} |
+%%                                   {stop, Reason, Reply, State} |
+%%                                   {stop, Reason, State}
+%% @end
+%%--------------------------------------------------------------------
+handle_call({save_message, Addressee, Body}, _From, State) -> 
+    store_message(Addressee, Body),
+    {reply, ok, State};
+
+handle_call({find_messages, Addressee}, _From, State) -> 
+    Messages = get_messages(Addressee),
+    {reply, {ok, Messages}, State};
+
+handle_call(stop, _From, State) ->
+    mnesia:stop(), 
+    {stop, normal, State};
+
+handle_call(_Request, _From, State) ->
+    Reply = ignored,
+    {reply, Reply, State}.
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Handling cast messages
+%%
+%% @spec handle_cast(Msg, State) -> {noreply, State} |
+%%                                  {noreply, State, Timeout} |
+%%                                  {stop, Reason, State}
+%% @end
+%%--------------------------------------------------------------------
+handle_cast(_Msg, State) ->
+    {noreply, State}.
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Handling all non call/cast messages
+%%
+%% @spec handle_info(Info, State) -> {noreply, State} |
+%%                                   {noreply, State, Timeout} |
+%%                                   {stop, Reason, State}
+%% @end
+%%--------------------------------------------------------------------
+handle_info(_Info, State) ->
+    {noreply, State}.
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% This function is called by a gen_server when it is about to
+%% terminate. It should be the opposite of Module:init/1 and do any
+%% necessary cleaning up. When it returns, the gen_server terminates
+%% with Reason. The return value is ignored.
+%%
+%% @spec terminate(Reason, State) -> void()
+%% @end
+%%--------------------------------------------------------------------
+terminate(_Reason, _State) ->
+    ok.
+
+%%--------------------------------------------------------------------
+%% @private
+%% @doc
+%% Convert process state when code is changed
+%%
+%% @spec code_change(OldVsn, State, Extra) -> {ok, NewState}
+%% @end
+%%--------------------------------------------------------------------
+code_change(_OldVsn, State, _Extra) ->
+    {ok, State}.
+
+%%%===================================================================
+%%% Internal functions
+%%%===================================================================
 
 store_message(Addressee, Body) -> 
     F = fun() -> 

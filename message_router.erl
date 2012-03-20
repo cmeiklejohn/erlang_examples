@@ -6,11 +6,11 @@
 
 start() -> 
     server_util:start(?SERVER, {message_router, route_messages, [dict:new()]}),
-    message_store:start().
+    message_store:start_link().
 
 stop() ->
     server_util:stop(),
-    message_store:stop().
+    message_store:shutdown().
 
 register_nickname(ClientName, Pid) -> 
     global:send(?SERVER, {register_nickname, ClientName, Pid}).
